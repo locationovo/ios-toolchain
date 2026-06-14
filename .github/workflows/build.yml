@@ -166,8 +166,11 @@ CHECK
           printf 'Package: org.popt.popt\nName: popt\nVersion: 1.19\nArchitecture: iphoneos-arm\nDepends: firmware (>= %s)\nDescription: Popt library (rootless)\nMaintainer: rootless\nSection: Libraries\n' "$MIN_IOS" > DEBIAN/control
           cd ..
           dpkg-deb --rootless -Zgzip -b staging popt-${{ matrix.arch }}-rootless.deb
+
       - uses: actions/upload-artifact@v4
-        with: { name: popt-${{ matrix.arch }}-deb, path: popt-${{ matrix.arch }}-rootless.deb }
+        with:
+          name: popt-${{ matrix.arch }}-deb
+          path: popt-${{ matrix.arch }}-rootless.deb
 
       # ========================================================
       # 2. rsync
@@ -200,8 +203,11 @@ CHECK
           printf 'Package: org.rsync.rsync\nName: rsync\nVersion: 3.2.7\nArchitecture: iphoneos-arm\nDepends: firmware (>= %s), org.popt.popt\nDescription: Rsync for iOS (rootless)\nMaintainer: rootless\nSection: Networking\n' "$MIN_IOS" > DEBIAN/control
           cd ..
           dpkg-deb --rootless -Zgzip -b deb-root-rsync rsync-${{ matrix.arch }}-rootless.deb
+
       - uses: actions/upload-artifact@v4
-        with: { name: rsync-${{ matrix.arch }}-deb, path: rsync-${{ matrix.arch }}-rootless.deb }
+        with:
+          name: rsync-${{ matrix.arch }}-deb
+          path: rsync-${{ matrix.arch }}-rootless.deb
 
       # ========================================================
       # 3. GNU make
@@ -233,8 +239,11 @@ CHECK
           printf 'Package: org.gnu.make\nName: GNU Make\nVersion: 4.4.1\nArchitecture: iphoneos-arm\nDepends: firmware (>= %s)\nDescription: GNU Make for iOS (rootless)\nMaintainer: rootless\nSection: Development\n' "$MIN_IOS" > DEBIAN/control
           cd ..
           dpkg-deb --rootless -Zgzip -b deb-root-make make-${{ matrix.arch }}-rootless.deb
+
       - uses: actions/upload-artifact@v4
-        with: { name: make-${{ matrix.arch }}-deb, path: make-${{ matrix.arch }}-rootless.deb }
+        with:
+          name: make-${{ matrix.arch }}-deb
+          path: make-${{ matrix.arch }}-rootless.deb
 
       # ========================================================
       # 4. lz4
@@ -262,8 +271,11 @@ CHECK
           printf 'Package: org.lz4.lz4\nName: lz4\nVersion: 1.10.0\nArchitecture: iphoneos-arm\nDepends: firmware (>= %s)\nDescription: LZ4 compression tools (rootless)\nMaintainer: rootless\nSection: Development\n' "$MIN_IOS" > DEBIAN/control
           cd ..
           dpkg-deb --rootless -Zgzip -b deb-root-lz4 lz4-${{ matrix.arch }}-rootless.deb
+
       - uses: actions/upload-artifact@v4
-        with: { name: lz4-${{ matrix.arch }}-deb, path: lz4-${{ matrix.arch }}-rootless.deb }
+        with:
+          name: lz4-${{ matrix.arch }}-deb
+          path: lz4-${{ matrix.arch }}-rootless.deb
 
       # ========================================================
       # 5. perl（config.sh 写死 iOS 变量）
@@ -279,10 +291,8 @@ CHECK
           _CC="$(xcrun --sdk iphoneos -f clang)"
           _LD="$(xcrun --sdk iphoneos -f clang)"
 
-          # 生成初始 config.sh，然后硬覆盖
           ./Configure -des -Dprefix=$PREFIX > /dev/null 2>&1 || true
 
-          # 直接用多个 echo 追加 + 覆盖，避免 heredoc 缩进问题
           echo "ar='$(xcrun --sdk iphoneos -f ar)'" > config.sh
           echo "cc='${_CC} -arch ${ARCH} -isysroot ${SDK} -miphoneos-version-min=${MIN_IOS}'" >> config.sh
           echo "cpp='${_CC} -E -arch ${ARCH} -isysroot ${SDK} -miphoneos-version-min=${MIN_IOS}'" >> config.sh
@@ -332,8 +342,11 @@ CHECK
           printf 'Package: org.perl.perl\nName: Perl\nVersion: 5.40.0\nArchitecture: iphoneos-arm\nDepends: firmware (>= %s)\nDescription: Perl 5 for iOS (rootless, cross-compiled)\nMaintainer: rootless\nSection: Development\n' "$MIN_IOS" > DEBIAN/control
           cd ..
           dpkg-deb --rootless -Zgzip -b deb-root-perl perl-${{ matrix.arch }}-rootless.deb
+
       - uses: actions/upload-artifact@v4
-        with: { name: perl-${{ matrix.arch }}-deb, path: perl-${{ matrix.arch }}-rootless.deb }
+        with:
+          name: perl-${{ matrix.arch }}-deb
+          path: perl-${{ matrix.arch }}-rootless.deb
 
       # ========================================================
       # 6. odcctools（静态链接 LLVM）
@@ -358,7 +371,6 @@ CHECK
           CXX="$(xcrun --sdk iphoneos -f clang++) ${ARCH_FLAGS} -stdlib=libc++"
           LLVM_LIB="${LLVM_PATH}/lib"
 
-          # 静态库列表
           STATIC_LIBS="${LLVM_LIB}/libLLVM-18.a ${LLVM_LIB}/libLLVMSupport.a ${LLVM_LIB}/libLLVMDemangle.a ${LLVM_LIB}/libLLVMObject.a ${LLVM_LIB}/libLLVMBinaryFormat.a ${LLVM_LIB}/libLLVMBitReader.a ${LLVM_LIB}/libLLVMCore.a ${LLVM_LIB}/libLLVMMC.a ${LLVM_LIB}/libLLVMMCParser.a ${LLVM_LIB}/libLLVMTextAPI.a ${LLVM_LIB}/libLLVMTargetParser.a"
 
           ./configure \
@@ -412,8 +424,11 @@ CHECK
           printf 'Package: org.odcctools.odcctools\nName: odcctools\nVersion: 1.0.0\nArchitecture: iphoneos-arm\nDepends: firmware (>= %s)\nDescription: ODCCTools for iOS (rootless, statically linked)\nMaintainer: rootless\nSection: Development\n' "$MIN_IOS" > DEBIAN/control
           cd ..
           dpkg-deb --rootless -Zgzip -b deb-root-odcc odcctools-${{ matrix.arch }}-rootless.deb
+
       - uses: actions/upload-artifact@v4
-        with: { name: odcctools-${{ matrix.arch }}-deb, path: odcctools-${{ matrix.arch }}-rootless.deb }
+        with:
+          name: odcctools-${{ matrix.arch }}-deb
+          path: odcctools-${{ matrix.arch }}-rootless.deb
 
       # ========================================================
       # 7. swift 空壳
@@ -432,5 +447,8 @@ SH
           mkdir -p deb-root-swift/DEBIAN
           printf 'Package: org.swift.swift-stub\nName: Swift Stub\nVersion: 1.0.0\nArchitecture: iphoneos-arm\nDepends: firmware (>= %s)\nDescription: Swift stub to satisfy theos dependency (rootless)\nMaintainer: rootless\nSection: Development\n' "$MIN_IOS" > deb-root-swift/DEBIAN/control
           dpkg-deb --rootless -Zgzip -b deb-root-swift swift-${{ matrix.arch }}-rootless.deb
+
       - uses: actions/upload-artifact@v4
-        with: { name: swift-${{ matrix.arch }}-deb, path: swift-${{ matrix.arch }}-rootless.deb }
+        with:
+          name: swift-${{ matrix.arch }}-deb
+          path: swift-${{ matrix.arch }}-rootless.deb
