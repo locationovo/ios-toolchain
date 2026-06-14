@@ -28,8 +28,16 @@ jobs:
       - name: 配置并编译 clang + lld
         run: |
           set -ex
-          rm -rf llvm-project/clang/tools/amdgpu-arch
-          rm -rf llvm-project/clang/tools/nvptx-arch
+          # 根治所有 MACOSX_BUNDLE 错误：只保留 driver，删掉所有辅助工具
+          cd llvm-project/clang/tools
+          for d in */; do
+            d=${d%/}
+            if [ "$d" != "driver" ]; then
+              rm -rf "$d"
+            fi
+          done
+          cd "$GITHUB_WORKSPACE"
+
           SDK=$(xcrun --sdk iphoneos --show-sdk-path)
           cd llvm-project && mkdir build && cd build
           cmake ../llvm -G Ninja \
@@ -313,56 +321,4 @@ jobs:
           echo "prefix='${PREFIX}'" >> config.sh
           echo "bin='${PREFIX}/bin'" >> config.sh
           echo "privlib='${PREFIX}/lib/perl5'" >> config.sh
-          echo "sitelib='${PREFIX}/lib/perl5/site_perl'" >> config.sh
-          echo "vendorlib='${PREFIX}/lib/perl5/vendor_perl'" >> config.sh
-          echo "mansrc='none'" >> config.sh
-          echo "man1dir='none'" >> config.sh
-          echo "man3dir='none'" >> config.sh
-
-          ./Configure -S
-          make miniperl -j$J
-          make perl -j$J
-
-          mkdir -p ../deb-root-perl/var/jb/usr/bin ../deb-root-perl/var/jb/usr/lib/perl5
-          cp perl ../deb-root-perl/var/jb/usr/bin/
-          cp lib/Config.pm ../deb-root-perl/var/jb/usr/lib/perl5/ 2>/dev/null || true
-          cp lib/Config_heavy.pl ../deb-root-perl/var/jb/usr/lib/perl5/ 2>/dev/null || true
-
-      - name: "[5/7] perl - 校验并打包"
-        run: |
-          set -ex
-          BIN=deb-root-perl/var/jb/usr/bin/perl
-          echo "=== check: $BIN ==="
-          otool -L "$BIN"
-          if otool -L "$BIN" | tail -n +2 | awk '{print $1}' | grep -qE '^(/usr/local|/opt/homebrew|/Library/Developer|@rpath)'; then
-            echo "FAIL: macOS dependency detected"
-            exit 1
-          fi
-          echo "PASS: iOS compatibility OK"
-          cd deb-root-perl && mkdir -p DEBIAN
-          printf 'Package: org.perl.perl\nName: Perl\nVersion: 5.40.0\nArchitecture: iphoneos-arm\nDepends: firmware (>= %s)\nDescription: Perl 5 for iOS (rootless, cross-compiled)\nMaintainer: rootless\nSection: Development\n' "$MIN_IOS" > DEBIAN/control
-          cd ..
-          dpkg-deb --root-owner-group -Zgzip -b deb-root-perl perl-${{ matrix.arch }}-rootless.deb
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: perl-${{ matrix.arch }}-deb
-          path: perl-${{ matrix.arch }}-rootless.deb
-
-      - name: "[6/7] odcctools - 安装 macOS LLVM"
-        run: |
-          set -ex
-          brew install llvm@18
-          LLVM_PATH=$(brew --prefix llvm@18)
-          echo "LLVM_PATH=$LLVM_PATH" >> $GITHUB_ENV
-
-      - name: "[6/7] odcctools - 编译"
-        run: |
-          set -ex
-          git clone --depth 1 https://github.com/tpoechtrager/cctools-port.git
-          cd cctools-port/cctools
-
-          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
-          ARCH=${{ matrix.arch }}
-          ARCH_FLAGS="-arch ${ARCH} -isysroot ${SDK} -miphoneos-version-min=${MIN_IOS}"
-          CC="$(xcrun --sdk iphoneos -f clang) ${ARCH_FLAGS}"
+          echo "sitelib='${PREFIX}/
