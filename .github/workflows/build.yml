@@ -437,7 +437,7 @@ exit 1
 SWIFT_STUB
           chmod 755 deb-root-swift/var/jb/usr/bin/swift
           mkdir -p deb-root-swift/DEBIAN
-          printf 'Package: org.swift.swift-stub\nName: Swift Stub\nVersion: 1.0.0\nArchitecture: iphoneos-arm\nDepends: firmware (>= %s)\nDescription: Swift stub to satisfy theos dependency (rootless)\nMaintainer: rootless\nSection: Development\n' "$MIN_IOS" > deb-root-swift/DEBIAN/control
+          printf 'Package: org.swift.swift-stub\nName: Swift Stub\nVersion: 1.0.0\nArchitecture: iphoneos-arm\nDepends: firmware (>= %s)\nDescription: Swift stub to satisfy theos dependency (rootless)\nMaintainer: rootless\nSection: Development\n' "$MIN_IOS" > DEBIAN/control
           dpkg-deb --rootless -Zgzip -b deb-root-swift swift-${{ matrix.arch }}-rootless.deb
 
       - uses: actions/upload-artifact@v4
