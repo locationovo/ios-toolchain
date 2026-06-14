@@ -7,7 +7,7 @@ env:
 
 jobs:
   # ============================================================
-  # clang + lld（4 个版本 × 2 架构 = 4 个并行任务）
+  # clang + lld（4 个版本 × 2 架构）
   # ============================================================
   build-clang:
     strategy:
@@ -32,12 +32,6 @@ jobs:
         run: |
           set -ex
           SDK=$(xcrun --sdk iphoneos --show-sdk-path)
-
-          # 去除 MACOSX_BUNDLE，防止生成 .app
-          perl -i -pe 's/MACOSX_BUNDLE\s+TRUE/MACOSX_BUNDLE FALSE/g' \
-            llvm-project/lld/cmake/modules/AddLLD.cmake \
-            llvm-project/llvm/cmake/modules/AddLLVM.cmake 2>/dev/null || true
-
           cd llvm-project && mkdir build && cd build
           cmake ../llvm -G Ninja \
             -DCMAKE_SYSTEM_NAME=iOS \
@@ -63,46 +57,30 @@ jobs:
             -DCMAKE_EXE_LINKER_FLAGS="-Wl,-dead_strip"
           ninja clang lld
 
-      - name: 安装到 deb-root 并校验链接库
+      - name: 安装并校验
         run: |
           set -ex
           DESTDIR=$(pwd)/deb-root ninja -C llvm-project/build install
-
-          check_binary() {
-            local bin="$1"
+          cd deb-root
+          for bin in var/jb/usr/bin/clang var/jb/usr/bin/lld; do
             echo "=== 检查: $bin ==="
-            if [ ! -f "$bin" ]; then
-              echo "⚠️  跳过（文件不存在）"
-              return
-            fi
             otool -L "$bin"
-            LIBS=$(otool -L "$bin" | tail -n +2 | awk '{print $1}')
-            FORBIDDEN="^(/usr/local|/opt/homebrew|/Library/Developer|@rpath)"
-            for lib in $LIBS; do
-              if echo "$lib" | grep -qE "$FORBIDDEN"; then
-                echo "❌ 发现 macOS 依赖: $lib"
-                exit 1
-              fi
-            done
+            if otool -L "$bin" | tail -n +2 | awk '{print $1}' | grep -qE '^(/usr/local|/opt/homebrew|/Library/Developer|@rpath)'; then
+              echo "❌ 发现 macOS 依赖"
+              exit 1
+            fi
             echo "✅ iOS 兼容性通过"
-          }
-
-          check_binary deb-root/var/jb/usr/bin/clang
-          check_binary deb-root/var/jb/usr/bin/lld
+          done
 
       - name: 打包 .deb
         run: |
-          mkdir -p deb-root/DEBIAN
-          cat > deb-root/DEBIAN/control << EOF
-          Package: com.clang-toolchain.ios
-          Name: Clang Toolchain
-          Version: ${{ matrix.ver }}.1.0
-          Architecture: iphoneos-arm
-          Depends: firmware (>= $MIN_IOS)
-          Description: Clang ${{ matrix.ver }} + LLD for iOS ${{ matrix.arch }} (rootless)
-          Maintainer: rootless
-          Section: Development
-          EOF
+          set -ex
+          cd deb-root
+          mkdir -p DEBIAN
+          printf 'Package: com.clang-toolchain.ios\nName: Clang Toolchain\nVersion: %s.1.0\nArchitecture: iphoneos-arm\nDepends: firmware (>= %s)\nDescription: Clang %s + LLD for iOS %s (rootless)\nMaintainer: rootless\nSection: Development\n' \
+            "${{ matrix.ver }}" "$MIN_IOS" "${{ matrix.ver }}" "${{ matrix.arch }}" \
+            > DEBIAN/control
+          cd ..
           dpkg-deb --rootless -Zgzip -b deb-root clang-${{ matrix.ver }}-${{ matrix.arch }}-rootless.deb
 
       - uses: actions/upload-artifact@v4
@@ -111,7 +89,7 @@ jobs:
           path: clang-${{ matrix.ver }}-${{ matrix.arch }}-rootless.deb
 
   # ============================================================
-  # 其余工具（按依赖顺序串行：popt → rsync → make → lz4 → perl → odcctools → swift）
+  # 其余工具（串行：popt → rsync → make → lz4 → perl → odcctools → swift）
   # ============================================================
   build-tools:
     strategy:
@@ -122,7 +100,7 @@ jobs:
       - name: 安装构建依赖
         run: brew install dpkg autoconf automake libtool
 
-      - name: 设置交叉编译环境
+      - name: 设置环境变量
         run: |
           SDK=$(xcrun --sdk iphoneos --show-sdk-path)
           echo "SDK=${SDK}" >> $GITHUB_ENV
@@ -135,8 +113,7 @@ jobs:
           echo "STAGING=${GITHUB_WORKSPACE}/staging" >> $GITHUB_ENV
           echo "J=$(sysctl -n hw.ncpu)" >> $GITHUB_ENV
 
-      # ---- 通用校验脚本 ----
-      - name: 写入校验脚本
+      - name: 写入通用校验脚本
         run: |
           cat > /tmp/check-ios << 'CHECK'
           #!/bin/bash
@@ -157,11 +134,11 @@ jobs:
             fi
           done
           echo "✅ 只链接 iOS 系统库，兼容性通过"
-          CHECK
+CHECK
           chmod +x /tmp/check-ios
 
       # ========================================================
-      # 1. popt（rsync 的前置依赖）
+      # 1. popt
       # ========================================================
       - name: "[1/7] popt - 编译"
         run: |
@@ -180,38 +157,26 @@ jobs:
             LDFLAGS="$LDFLAGS"
           make -j$J
           make install DESTDIR=$STAGING
-          # 校验
           /tmp/check-ios $STAGING/var/jb/usr/lib/libpopt.a
 
       - name: "[1/7] popt - 打包"
         run: |
           set -ex
-          mkdir -p $STAGING/DEBIAN
-          cat > $STAGING/DEBIAN/control << 'CTRL'
-          Package: org.popt.popt
-          Name: popt
-          Version: 1.19
-          Architecture: iphoneos-arm
-          Depends: firmware (>= 15.0)
-          Description: Popt command line parsing library (rootless)
-          Maintainer: rootless
-          Section: Libraries
-          CTRL
-          sed -i '' "s/>= 15.0/>= $MIN_IOS/g" $STAGING/DEBIAN/control
-          dpkg-deb --rootless -Zgzip -b $STAGING popt-${{ matrix.arch }}-rootless.deb
+          cd $STAGING && mkdir -p DEBIAN
+          printf 'Package: org.popt.popt\nName: popt\nVersion: 1.19\nArchitecture: iphoneos-arm\nDepends: firmware (>= %s)\nDescription: Popt library (rootless)\nMaintainer: rootless\nSection: Libraries\n' "$MIN_IOS" > DEBIAN/control
+          cd ..
+          dpkg-deb --rootless -Zgzip -b staging popt-${{ matrix.arch }}-rootless.deb
       - uses: actions/upload-artifact@v4
         with: { name: popt-${{ matrix.arch }}-deb, path: popt-${{ matrix.arch }}-rootless.deb }
 
       # ========================================================
-      # 2. rsync（依赖 popt）
+      # 2. rsync
       # ========================================================
       - name: "[2/7] rsync - 编译"
         run: |
           set -ex
-          curl -LO https://download.samba.org/pub/rsync/src/rsync-3.3.0.tar.gz \
-            || curl -LO https://download.samba.org/pub/rsync/src/rsync-3.2.7.tar.gz
-          tar xzf rsync-*.tar.gz && cd rsync-*
-          POPT_DIR=$STAGING/var/jb/usr
+          curl -LO https://download.samba.org/pub/rsync/src/rsync-3.2.7.tar.gz
+          tar xzf rsync-3.2.7.tar.gz && cd rsync-3.2.7
           ./configure \
             --host=$HOST \
             --prefix=$PREFIX \
@@ -221,8 +186,8 @@ jobs:
             --disable-openssl \
             --with-included-popt=no \
             CC="$CROSS_CC" \
-            CFLAGS="$CFLAGS -I$POPT_DIR/include" \
-            LDFLAGS="$LDFLAGS -L$POPT_DIR/lib"
+            CFLAGS="$CFLAGS -I$STAGING/var/jb/usr/include" \
+            LDFLAGS="$LDFLAGS -L$STAGING/var/jb/usr/lib"
           make -j$J
           mkdir -p ../deb-root-rsync/var/jb/usr/bin
           cp rsync ../deb-root-rsync/var/jb/usr/bin/
@@ -231,18 +196,9 @@ jobs:
       - name: "[2/7] rsync - 打包"
         run: |
           set -ex
-          mkdir -p deb-root-rsync/DEBIAN
-          cat > deb-root-rsync/DEBIAN/control << 'CTRL'
-          Package: org.rsync.rsync
-          Name: rsync
-          Version: 3.3.0
-          Architecture: iphoneos-arm
-          Depends: firmware (>= 15.0), org.popt.popt
-          Description: Rsync for iOS (rootless)
-          Maintainer: rootless
-          Section: Networking
-          CTRL
-          sed -i '' "s/>= 15.0/>= $MIN_IOS/g" deb-root-rsync/DEBIAN/control
+          cd deb-root-rsync && mkdir -p DEBIAN
+          printf 'Package: org.rsync.rsync\nName: rsync\nVersion: 3.2.7\nArchitecture: iphoneos-arm\nDepends: firmware (>= %s), org.popt.popt\nDescription: Rsync for iOS (rootless)\nMaintainer: rootless\nSection: Networking\n' "$MIN_IOS" > DEBIAN/control
+          cd ..
           dpkg-deb --rootless -Zgzip -b deb-root-rsync rsync-${{ matrix.arch }}-rootless.deb
       - uses: actions/upload-artifact@v4
         with: { name: rsync-${{ matrix.arch }}-deb, path: rsync-${{ matrix.arch }}-rootless.deb }
@@ -273,18 +229,9 @@ jobs:
       - name: "[3/7] make - 打包"
         run: |
           set -ex
-          mkdir -p deb-root-make/DEBIAN
-          cat > deb-root-make/DEBIAN/control << 'CTRL'
-          Package: org.gnu.make
-          Name: GNU Make
-          Version: 4.4.1
-          Architecture: iphoneos-arm
-          Depends: firmware (>= 15.0)
-          Description: GNU Make for iOS (rootless)
-          Maintainer: rootless
-          Section: Development
-          CTRL
-          sed -i '' "s/>= 15.0/>= $MIN_IOS/g" deb-root-make/DEBIAN/control
+          cd deb-root-make && mkdir -p DEBIAN
+          printf 'Package: org.gnu.make\nName: GNU Make\nVersion: 4.4.1\nArchitecture: iphoneos-arm\nDepends: firmware (>= %s)\nDescription: GNU Make for iOS (rootless)\nMaintainer: rootless\nSection: Development\n' "$MIN_IOS" > DEBIAN/control
+          cd ..
           dpkg-deb --rootless -Zgzip -b deb-root-make make-${{ matrix.arch }}-rootless.deb
       - uses: actions/upload-artifact@v4
         with: { name: make-${{ matrix.arch }}-deb, path: make-${{ matrix.arch }}-rootless.deb }
@@ -304,33 +251,22 @@ jobs:
           mkdir -p ../deb-root-lz4/var/jb/usr/bin ../deb-root-lz4/var/jb/usr/lib
           cp lz4 lz4c ../deb-root-lz4/var/jb/usr/bin/ 2>/dev/null || true
           cp lib/liblz4.dylib ../deb-root-lz4/var/jb/usr/lib/ 2>/dev/null || true
-          cp lib/liblz4.a ../deb-root-lz4/var/jb/usr/lib/ 2>/dev/null || true
-          # 校验所有二进制
-          for b in deb-root-lz4/var/jb/usr/bin/*; do
+          for b in ../deb-root-lz4/var/jb/usr/bin/*; do
             [ -f "$b" ] && /tmp/check-ios "$b"
           done
 
       - name: "[4/7] lz4 - 打包"
         run: |
           set -ex
-          mkdir -p deb-root-lz4/DEBIAN
-          cat > deb-root-lz4/DEBIAN/control << 'CTRL'
-          Package: org.lz4.lz4
-          Name: lz4
-          Version: 1.10.0
-          Architecture: iphoneos-arm
-          Depends: firmware (>= 15.0)
-          Description: LZ4 compression tools (rootless)
-          Maintainer: rootless
-          Section: Development
-          CTRL
-          sed -i '' "s/>= 15.0/>= $MIN_IOS/g" deb-root-lz4/DEBIAN/control
+          cd deb-root-lz4 && mkdir -p DEBIAN
+          printf 'Package: org.lz4.lz4\nName: lz4\nVersion: 1.10.0\nArchitecture: iphoneos-arm\nDepends: firmware (>= %s)\nDescription: LZ4 compression tools (rootless)\nMaintainer: rootless\nSection: Development\n' "$MIN_IOS" > DEBIAN/control
+          cd ..
           dpkg-deb --rootless -Zgzip -b deb-root-lz4 lz4-${{ matrix.arch }}-rootless.deb
       - uses: actions/upload-artifact@v4
         with: { name: lz4-${{ matrix.arch }}-deb, path: lz4-${{ matrix.arch }}-rootless.deb }
 
       # ========================================================
-      # 5. perl（完整交叉编译，config.sh 强制注入）
+      # 5. perl（config.sh 写死 iOS 变量）
       # ========================================================
       - name: "[5/7] perl - 配置并编译"
         run: |
@@ -340,100 +276,76 @@ jobs:
 
           SDK=$(xcrun --sdk iphoneos --show-sdk-path)
           ARCH=${{ matrix.arch }}
-          CC="$(xcrun --sdk iphoneos -f clang)"
-          LD="$(xcrun --sdk iphoneos -f clang)"
-          AR="$(xcrun --sdk iphoneos -f ar)"
-          NM="$(xcrun --sdk iphoneos -f nm)"
-          RANLIB="$(xcrun --sdk iphoneos -f ranlib)"
+          _CC="$(xcrun --sdk iphoneos -f clang)"
+          _LD="$(xcrun --sdk iphoneos -f clang)"
 
-          # 先用 -des 生成初始 config.sh
+          # 生成初始 config.sh，然后硬覆盖
           ./Configure -des -Dprefix=$PREFIX > /dev/null 2>&1 || true
 
-          # 强制覆盖 config.sh —— 写死 iOS 交叉编译变量
-          cat > config.sh << CONFIGSH
-          ar='${AR}'
-          cc='${CC} -arch ${ARCH} -isysroot ${SDK} -miphoneos-version-min=${MIN_IOS}'
-          cpp='${CC} -E -arch ${ARCH} -isysroot ${SDK} -miphoneos-version-min=${MIN_IOS}'
-          ld='${LD} -arch ${ARCH} -isysroot ${SDK} -miphoneos-version-min=${MIN_IOS}'
-          nm='${NM}'
-          ranlib='${RANLIB}'
-          ccflags='-arch ${ARCH} -isysroot ${SDK} -miphoneos-version-min=${MIN_IOS} -D_DARWIN_C_SOURCE -fno-stack-check'
-          ldflags='-arch ${ARCH} -isysroot ${SDK} -miphoneos-version-min=${MIN_IOS}'
-          lddlflags='-arch ${ARCH} -isysroot ${SDK} -miphoneos-version-min=${MIN_IOS} -dynamiclib'
-          cppflags='-arch ${ARCH} -isysroot ${SDK} -miphoneos-version-min=${MIN_IOS} -D_DARWIN_C_SOURCE'
-          archname='arm64-darwin'
-          osname='darwin'
-          osvers='24.0'
-          myarchname='arm64-darwin'
-          i_ndbm='undef'
-          i_gdbm='undef'
-          i_db='undef'
-          d_dlopen='undef'
-          usedl='undef'
-          useshrplib='false'
-          usethreads='false'
-          use64bitint='define'
-          usemallocwrap='n'
-          userelocatableinc='undef'
-          d_dosuid='undef'
-          d_semctl_semun='undef'
-          d_semctl_semid_ds='undef'
-          prefix='${PREFIX}'
-          bin='${PREFIX}/bin'
-          privlib='${PREFIX}/lib/perl5'
-          sitelib='${PREFIX}/lib/perl5/site_perl'
-          vendorlib='${PREFIX}/lib/perl5/vendor_perl'
-          mansrc='none'
-          man1dir='none'
-          man3dir='none'
-          CONFIGSH
+          # 直接用多个 echo 追加 + 覆盖，避免 heredoc 缩进问题
+          echo "ar='$(xcrun --sdk iphoneos -f ar)'" > config.sh
+          echo "cc='${_CC} -arch ${ARCH} -isysroot ${SDK} -miphoneos-version-min=${MIN_IOS}'" >> config.sh
+          echo "cpp='${_CC} -E -arch ${ARCH} -isysroot ${SDK} -miphoneos-version-min=${MIN_IOS}'" >> config.sh
+          echo "ld='${_LD} -arch ${ARCH} -isysroot ${SDK} -miphoneos-version-min=${MIN_IOS}'" >> config.sh
+          echo "nm='$(xcrun --sdk iphoneos -f nm)'" >> config.sh
+          echo "ranlib='$(xcrun --sdk iphoneos -f ranlib)'" >> config.sh
+          echo "ccflags='-arch ${ARCH} -isysroot ${SDK} -miphoneos-version-min=${MIN_IOS} -D_DARWIN_C_SOURCE -fno-stack-check'" >> config.sh
+          echo "ldflags='-arch ${ARCH} -isysroot ${SDK} -miphoneos-version-min=${MIN_IOS}'" >> config.sh
+          echo "lddlflags='-arch ${ARCH} -isysroot ${SDK} -miphoneos-version-min=${MIN_IOS} -dynamiclib'" >> config.sh
+          echo "archname='arm64-darwin'" >> config.sh
+          echo "osname='darwin'" >> config.sh
+          echo "osvers='24.0'" >> config.sh
+          echo "myarchname='arm64-darwin'" >> config.sh
+          echo "i_ndbm='undef'" >> config.sh
+          echo "i_gdbm='undef'" >> config.sh
+          echo "i_db='undef'" >> config.sh
+          echo "d_dlopen='undef'" >> config.sh
+          echo "usedl='undef'" >> config.sh
+          echo "useshrplib='false'" >> config.sh
+          echo "usethreads='false'" >> config.sh
+          echo "use64bitint='define'" >> config.sh
+          echo "usemallocwrap='n'" >> config.sh
+          echo "userelocatableinc='undef'" >> config.sh
+          echo "prefix='${PREFIX}'" >> config.sh
+          echo "bin='${PREFIX}/bin'" >> config.sh
+          echo "privlib='${PREFIX}/lib/perl5'" >> config.sh
+          echo "sitelib='${PREFIX}/lib/perl5/site_perl'" >> config.sh
+          echo "vendorlib='${PREFIX}/lib/perl5/vendor_perl'" >> config.sh
+          echo "mansrc='none'" >> config.sh
+          echo "man1dir='none'" >> config.sh
+          echo "man3dir='none'" >> config.sh
 
-          # 重新应用配置
           ./Configure -S
-
-          # 编译
           make miniperl -j$J
           make perl -j$J
 
-          # 安装到 deb-root
           mkdir -p ../deb-root-perl/var/jb/usr/bin ../deb-root-perl/var/jb/usr/lib/perl5
           cp perl ../deb-root-perl/var/jb/usr/bin/
           cp lib/Config.pm ../deb-root-perl/var/jb/usr/lib/perl5/ 2>/dev/null || true
           cp lib/Config_heavy.pl ../deb-root-perl/var/jb/usr/lib/perl5/ 2>/dev/null || true
-
-          # 强制校验
           /tmp/check-ios ../deb-root-perl/var/jb/usr/bin/perl
 
       - name: "[5/7] perl - 打包"
         run: |
           set -ex
-          mkdir -p deb-root-perl/DEBIAN
-          cat > deb-root-perl/DEBIAN/control << 'CTRL'
-          Package: org.perl.perl
-          Name: Perl
-          Version: 5.40.0
-          Architecture: iphoneos-arm
-          Depends: firmware (>= 15.0)
-          Description: Perl 5 for iOS (rootless, cross-compiled)
-          Maintainer: rootless
-          Section: Development
-          CTRL
-          sed -i '' "s/>= 15.0/>= $MIN_IOS/g" deb-root-perl/DEBIAN/control
+          cd deb-root-perl && mkdir -p DEBIAN
+          printf 'Package: org.perl.perl\nName: Perl\nVersion: 5.40.0\nArchitecture: iphoneos-arm\nDepends: firmware (>= %s)\nDescription: Perl 5 for iOS (rootless, cross-compiled)\nMaintainer: rootless\nSection: Development\n' "$MIN_IOS" > DEBIAN/control
+          cd ..
           dpkg-deb --rootless -Zgzip -b deb-root-perl perl-${{ matrix.arch }}-rootless.deb
       - uses: actions/upload-artifact@v4
         with: { name: perl-${{ matrix.arch }}-deb, path: perl-${{ matrix.arch }}-rootless.deb }
 
       # ========================================================
-      # 6. odcctools（静态链接 LLVM，零 macOS dylib 依赖）
+      # 6. odcctools（静态链接 LLVM）
       # ========================================================
-      - name: "[6/7] odcctools - 安装 macOS LLVM（仅供静态链接）"
+      - name: "[6/7] odcctools - 安装 macOS LLVM"
         run: |
           set -ex
           brew install llvm@18
           LLVM_PATH=$(brew --prefix llvm@18)
           echo "LLVM_PATH=$LLVM_PATH" >> $GITHUB_ENV
 
-      - name: "[6/7] odcctools - 编译（静态链接）"
+      - name: "[6/7] odcctools - 编译"
         run: |
           set -ex
           git clone --depth 1 https://github.com/tpoechtrager/cctools-port.git
@@ -444,12 +356,11 @@ jobs:
           ARCH_FLAGS="-arch ${ARCH} -isysroot ${SDK} -miphoneos-version-min=${MIN_IOS}"
           CC="$(xcrun --sdk iphoneos -f clang) ${ARCH_FLAGS}"
           CXX="$(xcrun --sdk iphoneos -f clang++) ${ARCH_FLAGS} -stdlib=libc++"
-
-          # LLVM 静态库
           LLVM_LIB="${LLVM_PATH}/lib"
+
+          # 静态库列表
           STATIC_LIBS="${LLVM_LIB}/libLLVM-18.a ${LLVM_LIB}/libLLVMSupport.a ${LLVM_LIB}/libLLVMDemangle.a ${LLVM_LIB}/libLLVMObject.a ${LLVM_LIB}/libLLVMBinaryFormat.a ${LLVM_LIB}/libLLVMBitReader.a ${LLVM_LIB}/libLLVMCore.a ${LLVM_LIB}/libLLVMMC.a ${LLVM_LIB}/libLLVMMCParser.a ${LLVM_LIB}/libLLVMTextAPI.a ${LLVM_LIB}/libLLVMTargetParser.a"
 
-          # 配置
           ./configure \
             --host=arm64-apple-darwin \
             --prefix=$PREFIX \
@@ -463,58 +374,49 @@ jobs:
             --disable-clang-as \
             --disable-lto 2>/dev/null || true
 
-          # 编译（单线程更稳定）
           make -j1 2>&1 || make -j1 LDADD="${STATIC_LIBS} -lc++ -lSystem" 2>&1
 
-          # 收集二进制
           mkdir -p ../../deb-root-odcc/var/jb/usr/bin
+          BIN_COUNT=0
           for tool in ld ar nm ranlib strip lipo otool install_name_tool size strings; do
             if [ -f "$tool" ]; then
-              # 确保是 ARM64 二进制
               FILE_TYPE=$(file "$tool" 2>/dev/null | grep -o "arm64\|arm64e" || true)
               if [ -n "$FILE_TYPE" ]; then
                 cp "$tool" ../../deb-root-odcc/var/jb/usr/bin/
+                BIN_COUNT=$((BIN_COUNT + 1))
               fi
-            fi
-          done
-
-          # 校验所有产物
-          BIN_COUNT=0
-          for b in ../../deb-root-odcc/var/jb/usr/bin/*; do
-            if [ -f "$b" ]; then
-              echo "--- 校验: $b ---"
-              file "$b"
-              /tmp/check-ios "$b"
-              BIN_COUNT=$((BIN_COUNT + 1))
             fi
           done
           echo "产生了 $BIN_COUNT 个 iOS 二进制"
           if [ "$BIN_COUNT" -eq 0 ]; then
-            echo "❌ odcctools 编译失败，无二进制产出"
+            echo "❌ odcctools 编译失败"
             exit 1
           fi
+          echo "done" > ../../deb-root-odcc/.built
+
+      - name: "[6/7] odcctools - 校验"
+        run: |
+          set -ex
+          cd deb-root-odcc
+          for b in var/jb/usr/bin/*; do
+            [ -f "$b" ] || continue
+            echo "--- 校验: $b ---"
+            file "$b"
+            /tmp/check-ios "$b"
+          done
 
       - name: "[6/7] odcctools - 打包"
         run: |
           set -ex
-          mkdir -p deb-root-odcc/DEBIAN
-          cat > deb-root-odcc/DEBIAN/control << 'CTRL'
-          Package: org.odcctools.odcctools
-          Name: odcctools
-          Version: 1.0.0
-          Architecture: iphoneos-arm
-          Depends: firmware (>= 15.0)
-          Description: ODCCTools for iOS (rootless, statically linked)
-          Maintainer: rootless
-          Section: Development
-          CTRL
-          sed -i '' "s/>= 15.0/>= $MIN_IOS/g" deb-root-odcc/DEBIAN/control
+          cd deb-root-odcc && mkdir -p DEBIAN
+          printf 'Package: org.odcctools.odcctools\nName: odcctools\nVersion: 1.0.0\nArchitecture: iphoneos-arm\nDepends: firmware (>= %s)\nDescription: ODCCTools for iOS (rootless, statically linked)\nMaintainer: rootless\nSection: Development\n' "$MIN_IOS" > DEBIAN/control
+          cd ..
           dpkg-deb --rootless -Zgzip -b deb-root-odcc odcctools-${{ matrix.arch }}-rootless.deb
       - uses: actions/upload-artifact@v4
         with: { name: odcctools-${{ matrix.arch }}-deb, path: odcctools-${{ matrix.arch }}-rootless.deb }
 
       # ========================================================
-      # 7. swift 空壳占位包
+      # 7. swift 空壳
       # ========================================================
       - name: "[7/7] swift - 创建空壳"
         run: |
@@ -522,23 +424,13 @@ jobs:
           mkdir -p deb-root-swift/var/jb/usr/bin
           cat > deb-root-swift/var/jb/usr/bin/swift << 'SH'
           #!/bin/sh
-          echo "⚠️  Swift stub: on-device compilation is not supported." >&2
-          echo "    Use macOS theos for Swift tweaks." >&2
+          echo "WARNING: Swift stub - on-device compilation unsupported." >&2
+          echo "Use macOS theos for Swift tweaks." >&2
           exit 1
-          SH
+SH
           chmod 755 deb-root-swift/var/jb/usr/bin/swift
           mkdir -p deb-root-swift/DEBIAN
-          cat > deb-root-swift/DEBIAN/control << 'CTRL'
-          Package: org.swift.swift-stub
-          Name: Swift Stub
-          Version: 1.0.0
-          Architecture: iphoneos-arm
-          Depends: firmware (>= 15.0)
-          Description: Swift stub to satisfy theos dependency (rootless)
-          Maintainer: rootless
-          Section: Development
-          CTRL
-          sed -i '' "s/>= 15.0/>= $MIN_IOS/g" deb-root-swift/DEBIAN/control
+          printf 'Package: org.swift.swift-stub\nName: Swift Stub\nVersion: 1.0.0\nArchitecture: iphoneos-arm\nDepends: firmware (>= %s)\nDescription: Swift stub to satisfy theos dependency (rootless)\nMaintainer: rootless\nSection: Development\n' "$MIN_IOS" > deb-root-swift/DEBIAN/control
           dpkg-deb --rootless -Zgzip -b deb-root-swift swift-${{ matrix.arch }}-rootless.deb
       - uses: actions/upload-artifact@v4
         with: { name: swift-${{ matrix.arch }}-deb, path: swift-${{ matrix.arch }}-rootless.deb }
