@@ -6,9 +6,6 @@ env:
   PREFIX: "/var/jb/usr"
 
 jobs:
-  # ============================================================
-  # clang + lld（4 个版本 × 2 架构）
-  # ============================================================
   build-clang:
     strategy:
       matrix:
@@ -88,9 +85,6 @@ jobs:
           name: clang-${{ matrix.ver }}-${{ matrix.arch }}-deb
           path: clang-${{ matrix.ver }}-${{ matrix.arch }}-rootless.deb
 
-  # ============================================================
-  # 其余工具（串行：popt → rsync → make → lz4 → perl → odcctools → swift）
-  # ============================================================
   build-tools:
     strategy:
       matrix:
@@ -137,9 +131,6 @@ jobs:
 CHECK
           chmod +x /tmp/check-ios
 
-      # ========================================================
-      # 1. popt
-      # ========================================================
       - name: "[1/7] popt - 编译"
         run: |
           set -ex
@@ -172,9 +163,6 @@ CHECK
           name: popt-${{ matrix.arch }}-deb
           path: popt-${{ matrix.arch }}-rootless.deb
 
-      # ========================================================
-      # 2. rsync
-      # ========================================================
       - name: "[2/7] rsync - 编译"
         run: |
           set -ex
@@ -209,9 +197,6 @@ CHECK
           name: rsync-${{ matrix.arch }}-deb
           path: rsync-${{ matrix.arch }}-rootless.deb
 
-      # ========================================================
-      # 3. GNU make
-      # ========================================================
       - name: "[3/7] make - 编译"
         run: |
           set -ex
@@ -245,9 +230,6 @@ CHECK
           name: make-${{ matrix.arch }}-deb
           path: make-${{ matrix.arch }}-rootless.deb
 
-      # ========================================================
-      # 4. lz4
-      # ========================================================
       - name: "[4/7] lz4 - 编译"
         run: |
           set -ex
@@ -277,9 +259,6 @@ CHECK
           name: lz4-${{ matrix.arch }}-deb
           path: lz4-${{ matrix.arch }}-rootless.deb
 
-      # ========================================================
-      # 5. perl（config.sh 写死 iOS 变量）
-      # ========================================================
       - name: "[5/7] perl - 配置并编译"
         run: |
           set -ex
@@ -348,9 +327,6 @@ CHECK
           name: perl-${{ matrix.arch }}-deb
           path: perl-${{ matrix.arch }}-rootless.deb
 
-      # ========================================================
-      # 6. odcctools（静态链接 LLVM）
-      # ========================================================
       - name: "[6/7] odcctools - 安装 macOS LLVM"
         run: |
           set -ex
@@ -430,9 +406,6 @@ CHECK
           name: odcctools-${{ matrix.arch }}-deb
           path: odcctools-${{ matrix.arch }}-rootless.deb
 
-      # ========================================================
-      # 7. swift 空壳
-      # ========================================================
       - name: "[7/7] swift - 创建空壳"
         run: |
           set -ex
