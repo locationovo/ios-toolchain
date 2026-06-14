@@ -28,6 +28,8 @@ jobs:
       - name: 配置并编译 clang + lld
         run: |
           set -ex
+          rm -rf llvm-project/clang/tools/amdgpu-arch
+          rm -rf llvm-project/clang/tools/nvptx-arch
           SDK=$(xcrun --sdk iphoneos --show-sdk-path)
           cd llvm-project && mkdir build && cd build
           cmake ../llvm -G Ninja \
@@ -49,7 +51,6 @@ jobs:
             -DLLVM_ENABLE_LIBXML2=OFF \
             -DLLVM_ENABLE_ZLIB=OFF \
             -DLLVM_ENABLE_ZSTD=OFF \
-            -DLLVM_TOOL_AMDGPU_ARCH_BUILD=OFF \
             -DCMAKE_CXX_FLAGS="-stdlib=libc++" \
             -DLLVM_STATIC_LINK_CXX_STDLIB=ON \
             -DCMAKE_EXE_LINKER_FLAGS="-Wl,-dead_strip"
@@ -79,7 +80,7 @@ jobs:
             "${{ matrix.ver }}" "$MIN_IOS" "${{ matrix.ver }}" "${{ matrix.arch }}" \
             > DEBIAN/control
           cd ..
-          dpkg-deb --rootless -Zgzip -b deb-root clang-${{ matrix.ver }}-${{ matrix.arch }}-rootless.deb
+          dpkg-deb --root-owner-group -Zgzip -b deb-root clang-${{ matrix.ver }}-${{ matrix.arch }}-rootless.deb
 
       - uses: actions/upload-artifact@v4
         with:
@@ -142,7 +143,7 @@ jobs:
           cd $STAGING && mkdir -p DEBIAN
           printf 'Package: org.popt.popt\nName: popt\nVersion: 1.19\nArchitecture: iphoneos-arm\nDepends: firmware (>= %s)\nDescription: Popt library (rootless)\nMaintainer: rootless\nSection: Libraries\n' "$MIN_IOS" > DEBIAN/control
           cd ..
-          dpkg-deb --rootless -Zgzip -b staging popt-${{ matrix.arch }}-rootless.deb
+          dpkg-deb --root-owner-group -Zgzip -b staging popt-${{ matrix.arch }}-rootless.deb
 
       - uses: actions/upload-artifact@v4
         with:
@@ -189,7 +190,7 @@ jobs:
           cd deb-root-rsync && mkdir -p DEBIAN
           printf 'Package: org.rsync.rsync\nName: rsync\nVersion: 3.2.7\nArchitecture: iphoneos-arm\nDepends: firmware (>= %s), org.popt.popt\nDescription: Rsync for iOS (rootless)\nMaintainer: rootless\nSection: Networking\n' "$MIN_IOS" > DEBIAN/control
           cd ..
-          dpkg-deb --rootless -Zgzip -b deb-root-rsync rsync-${{ matrix.arch }}-rootless.deb
+          dpkg-deb --root-owner-group -Zgzip -b deb-root-rsync rsync-${{ matrix.arch }}-rootless.deb
 
       - uses: actions/upload-artifact@v4
         with:
@@ -229,7 +230,7 @@ jobs:
           cd deb-root-make && mkdir -p DEBIAN
           printf 'Package: org.gnu.make\nName: GNU Make\nVersion: 4.4.1\nArchitecture: iphoneos-arm\nDepends: firmware (>= %s)\nDescription: GNU Make for iOS (rootless)\nMaintainer: rootless\nSection: Development\n' "$MIN_IOS" > DEBIAN/control
           cd ..
-          dpkg-deb --rootless -Zgzip -b deb-root-make make-${{ matrix.arch }}-rootless.deb
+          dpkg-deb --root-owner-group -Zgzip -b deb-root-make make-${{ matrix.arch }}-rootless.deb
 
       - uses: actions/upload-artifact@v4
         with:
@@ -266,7 +267,7 @@ jobs:
           mkdir -p DEBIAN
           printf 'Package: org.lz4.lz4\nName: lz4\nVersion: 1.10.0\nArchitecture: iphoneos-arm\nDepends: firmware (>= %s)\nDescription: LZ4 compression tools (rootless)\nMaintainer: rootless\nSection: Development\n' "$MIN_IOS" > DEBIAN/control
           cd ..
-          dpkg-deb --rootless -Zgzip -b deb-root-lz4 lz4-${{ matrix.arch }}-rootless.deb
+          dpkg-deb --root-owner-group -Zgzip -b deb-root-lz4 lz4-${{ matrix.arch }}-rootless.deb
 
       - uses: actions/upload-artifact@v4
         with:
@@ -341,7 +342,7 @@ jobs:
           cd deb-root-perl && mkdir -p DEBIAN
           printf 'Package: org.perl.perl\nName: Perl\nVersion: 5.40.0\nArchitecture: iphoneos-arm\nDepends: firmware (>= %s)\nDescription: Perl 5 for iOS (rootless, cross-compiled)\nMaintainer: rootless\nSection: Development\n' "$MIN_IOS" > DEBIAN/control
           cd ..
-          dpkg-deb --rootless -Zgzip -b deb-root-perl perl-${{ matrix.arch }}-rootless.deb
+          dpkg-deb --root-owner-group -Zgzip -b deb-root-perl perl-${{ matrix.arch }}-rootless.deb
 
       - uses: actions/upload-artifact@v4
         with:
@@ -365,77 +366,3 @@ jobs:
           ARCH=${{ matrix.arch }}
           ARCH_FLAGS="-arch ${ARCH} -isysroot ${SDK} -miphoneos-version-min=${MIN_IOS}"
           CC="$(xcrun --sdk iphoneos -f clang) ${ARCH_FLAGS}"
-          CXX="$(xcrun --sdk iphoneos -f clang++) ${ARCH_FLAGS} -stdlib=libc++"
-          LLVM_LIB="${LLVM_PATH}/lib"
-
-          ./configure \
-            --host=arm64-apple-darwin \
-            --prefix=$PREFIX \
-            --target=arm64-apple-darwin \
-            --with-llvm-config=${LLVM_PATH}/bin/llvm-config \
-            CC="$CC" \
-            CXX="$CXX" \
-            CFLAGS="${ARCH_FLAGS} -I${LLVM_PATH}/include" \
-            CXXFLAGS="${ARCH_FLAGS} -I${LLVM_PATH}/include -stdlib=libc++" \
-            LDFLAGS="${ARCH_FLAGS} -L${LLVM_LIB} -Wl,-Bstatic -lLLVMSupport -lLLVMDemangle -lLLVMObject -lLLVMBinaryFormat -lLLVMBitReader -lLLVMCore -lLLVMMC -lLLVMMCParser -lLLVMTextAPI -lLLVMTargetParser -Wl,-Bdynamic -lc++ -lSystem" \
-            --disable-clang-as \
-            --disable-lto 2>/dev/null || true
-
-          make -j1 2>&1
-
-          mkdir -p ../../deb-root-odcc/var/jb/usr/bin
-          BIN_COUNT=0
-          for tool in ld ar nm ranlib strip lipo otool install_name_tool size strings; do
-            if [ -f "$tool" ]; then
-              FILE_TYPE=$(file "$tool" 2>/dev/null | grep -o "arm64\|arm64e" || true)
-              if [ -n "$FILE_TYPE" ]; then
-                cp "$tool" ../../deb-root-odcc/var/jb/usr/bin/
-                BIN_COUNT=$((BIN_COUNT + 1))
-              fi
-            fi
-          done
-          echo "Produced $BIN_COUNT iOS binaries"
-          if [ "$BIN_COUNT" -eq 0 ]; then
-            echo "FAIL: odcctools build produced no binaries"
-            exit 1
-          fi
-
-      - name: "[6/7] odcctools - 校验并打包"
-        run: |
-          set -ex
-          cd deb-root-odcc
-          for b in var/jb/usr/bin/*; do
-            [ -f "$b" ] || continue
-            echo "=== check: $b ==="
-            file "$b"
-            otool -L "$b"
-            if otool -L "$b" | tail -n +2 | awk '{print $1}' | grep -qE '^(/usr/local|/opt/homebrew|/Library/Developer|@rpath)'; then
-              echo "FAIL: macOS dependency detected"
-              exit 1
-            fi
-            echo "PASS: iOS compatibility OK"
-          done
-          mkdir -p DEBIAN
-          printf 'Package: org.odcctools.odcctools\nName: odcctools\nVersion: 1.0.0\nArchitecture: iphoneos-arm\nDepends: firmware (>= %s)\nDescription: ODCCTools for iOS (rootless, statically linked)\nMaintainer: rootless\nSection: Development\n' "$MIN_IOS" > DEBIAN/control
-          cd ..
-          dpkg-deb --rootless -Zgzip -b deb-root-odcc odcctools-${{ matrix.arch }}-rootless.deb
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: odcctools-${{ matrix.arch }}-deb
-          path: odcctools-${{ matrix.arch }}-rootless.deb
-
-      - name: "[7/7] swift - 创建空壳"
-        run: |
-          set -ex
-          mkdir -p deb-root-swift/var/jb/usr/bin
-          printf '#!/bin/sh\necho "WARNING: Swift stub - on-device compilation unsupported." >&2\necho "Use macOS theos for Swift tweaks." >&2\nexit 1\n' > deb-root-swift/var/jb/usr/bin/swift
-          chmod 755 deb-root-swift/var/jb/usr/bin/swift
-          mkdir -p deb-root-swift/DEBIAN
-          printf 'Package: org.swift.swift-stub\nName: Swift Stub\nVersion: 1.0.0\nArchitecture: iphoneos-arm\nDepends: firmware (>= %s)\nDescription: Swift stub to satisfy theos dependency (rootless)\nMaintainer: rootless\nSection: Development\n' "$MIN_IOS" > deb-root-swift/DEBIAN/control
-          dpkg-deb --rootless -Zgzip -b deb-root-swift swift-${{ matrix.arch }}-rootless.deb
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: swift-${{ matrix.arch }}-deb
-          path: swift-${{ matrix.arch }}-rootless.deb
