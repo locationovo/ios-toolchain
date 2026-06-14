@@ -36,7 +36,7 @@ jobs:
             -DCMAKE_OSX_DEPLOYMENT_TARGET=$MIN_IOS \
             -DCMAKE_BUILD_TYPE=MinSizeRel \
             -DLLVM_ENABLE_PROJECTS="clang;lld" \
-            -DLLVM_TARGETS_TO_BUILD="ARM;AArch64" \
+            -DLLVM_TARGETS_TO_BUILD="AArch64" \
             -DCMAKE_INSTALL_PREFIX=$PREFIX \
             -DDEFAULT_SYSROOT=$SDK \
             -DLLVM_BUILD_TOOLS=OFF \
@@ -49,6 +49,7 @@ jobs:
             -DLLVM_ENABLE_LIBXML2=OFF \
             -DLLVM_ENABLE_ZLIB=OFF \
             -DLLVM_ENABLE_ZSTD=OFF \
+            -DLLVM_TOOL_AMDGPU_ARCH_BUILD=OFF \
             -DCMAKE_CXX_FLAGS="-stdlib=libc++" \
             -DLLVM_STATIC_LINK_CXX_STDLIB=ON \
             -DCMAKE_EXE_LINKER_FLAGS="-Wl,-dead_strip"
@@ -114,6 +115,12 @@ jobs:
           set -ex
           curl -LO https://ftp.osuosl.org/pub/rpm/popt/releases/popt-1.x/popt-1.19.tar.gz
           tar xzf popt-1.19.tar.gz && cd popt-1.19
+          for conf_dir in build-aux .; do
+            [ -f "$conf_dir/config.sub" ] && break
+          done
+          curl -L -o "$conf_dir/config.sub" "https://git.savannah.gnu.org/cgit/config.git/plain/config.sub"
+          curl -L -o "$conf_dir/config.guess" "https://git.savannah.gnu.org/cgit/config.git/plain/config.guess"
+          chmod +x "$conf_dir/config.sub" "$conf_dir/config.guess"
           ./configure \
             --host=$HOST \
             --prefix=$PREFIX \
@@ -147,6 +154,12 @@ jobs:
           set -ex
           curl -LO https://download.samba.org/pub/rsync/src/rsync-3.2.7.tar.gz
           tar xzf rsync-3.2.7.tar.gz && cd rsync-3.2.7
+          for conf_dir in build-aux .; do
+            [ -f "$conf_dir/config.sub" ] && break
+          done
+          curl -L -o "$conf_dir/config.sub" "https://git.savannah.gnu.org/cgit/config.git/plain/config.sub"
+          curl -L -o "$conf_dir/config.guess" "https://git.savannah.gnu.org/cgit/config.git/plain/config.guess"
+          chmod +x "$conf_dir/config.sub" "$conf_dir/config.guess"
           ./configure \
             --host=$HOST \
             --prefix=$PREFIX \
@@ -410,4 +423,24 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: odcctools-${{ matrix.arch }}-deb
-          path: odcctools
+          path: odcctools-${{ matrix.arch }}-rootless.deb
+
+      - name: "[7/7] swift - 创建空壳"
+        run: |
+          set -ex
+          mkdir -p deb-root-swift/var/jb/usr/bin
+          cat > deb-root-swift/var/jb/usr/bin/swift << 'SWIFT_STUB'
+#!/bin/sh
+echo "WARNING: Swift stub - on-device compilation unsupported." >&2
+echo "Use macOS theos for Swift tweaks." >&2
+exit 1
+SWIFT_STUB
+          chmod 755 deb-root-swift/var/jb/usr/bin/swift
+          mkdir -p deb-root-swift/DEBIAN
+          printf 'Package: org.swift.swift-stub\nName: Swift Stub\nVersion: 1.0.0\nArchitecture: iphoneos-arm\nDepends: firmware (>= %s)\nDescription: Swift stub to satisfy theos dependency (rootless)\nMaintainer: rootless\nSection: Development\n' "$MIN_IOS" > deb-root-swift/DEBIAN/control
+          dpkg-deb --rootless -Zgzip -b deb-root-swift swift-${{ matrix.arch }}-rootless.deb
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: swift-${{ matrix.arch }}-deb
+          path: swift-${{ matrix.arch }}-rootless.deb
